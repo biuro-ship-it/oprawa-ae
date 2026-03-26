@@ -1,13 +1,21 @@
-from fastapi import FastAPI, Request, Query
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 import pandas as pd
 import re
+import os
 from fpdf import FPDF
-import io
 
 app = FastAPI()
-templates = Jinja2Templates(directory="templates")
+
+# --- LOGIKA ŚCIEŻEK (Klucz do naprawy błędu 500) ---
+# __file__ to lokalizacja api/index.py. 
+# Folder główny projektu jest poziom wyżej.
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(CURRENT_DIR)
+
+templates_path = os.path.join(BASE_DIR, "templates")
+templates = Jinja2Templates(directory=templates_path)
 
 VAT = 1.23
 
@@ -17,8 +25,9 @@ def clean_pl(text):
 
 def load_data():
     try:
-        # Vercel uruchamia kod z głównego folderu, więc ścieżka 'cennik.csv' jest ok
-        df_raw = pd.read_csv('cennik.csv', sep=';', decimal=',', header=None, dtype=str)
+        # Szukamy cennika w głównym folderze
+        csv_path = os.path.join(BASE_DIR, 'cennik.csv')
+        df_raw = pd.read_csv(csv_path, sep=';', decimal=',', header=None, dtype=str)
         
         def get_val_footer(keyword, col_idx):
             mask = df_raw[0].astype(str).str.lower().str.strip().str.contains(keyword.lower(), na=False)
@@ -48,7 +57,7 @@ def load_data():
         df_frames['kod'] = df_frames['kod'].astype(str).str.strip()
         return df_frames, prices
     except Exception as e:
-        print(f"Błąd krytyczny danych: {e}")
+        print(f"Błąd krytyczny: {e}")
         return None, None
 
 @app.get("/", response_class=HTMLResponse)
@@ -58,37 +67,29 @@ async def home(request: Request):
 @app.get("/api/calculate")
 async def calculate(query: str):
     df, config = load_data()
-    if df is None: return {"error": "Błąd pliku cennik.csv na serwerze."}
+    if df is None: return {"error": "Błąd ładowania danych z pliku CSV."}
 
     liczby = re.findall(r'\d+', query)
-    if not liczby: return {"error": "Wpisz kod (np. 3484)"}
+    if not liczby: return {"error": "Wpisz kod."}
 
     kod_szukany = liczby[0]
     wybrana = df[df['kod'] == kod_szukany]
     
-    if wybrana.empty: return {"error": f"Nie znaleziono listwy o kodzie {kod_szukany}"}
+    if wybrana.empty: return {"error": f"Nie znaleziono kodu {kod_szukany}"}
 
     l = wybrana.iloc[0]
-    # Wyciągamy wymiary: jeśli brak, domyślnie 30x40
     szer = float(liczby[1]) if len(liczby) >= 2 else 30.0
     wys = float(liczby[2]) if len(liczby) >= 3 else 40.0
     
-    try:
-        sz_listwy = float(str(l['szerokosc']).replace(',', '.'))
-        c_l_netto = float(str(l['cena_l_netto']).replace(',', '.'))
-        c_o_netto = float(str(l['cena_o_netto']).replace(',', '.'))
-    except:
-        return {"error": "Błąd formatu liczb w cenniku dla tej listwy."}
+    sz_listwy = float(str(l['szerokosc']).replace(',', '.'))
+    c_l_netto = float(str(l['cena_l_netto']).replace(',', '.'))
+    c_o_netto = float(str(l['cena_o_netto']).replace(',', '.'))
 
     obwod_m = ((2 * szer) + (2 * wys) + (8 * sz_listwy)) / 100
     pow_m2 = (szer * wys) / 10000
 
     return {
-        "kod": l['kod'],
-        "szer": szer,
-        "wys": wys,
-        "obwod": round(obwod_m, 2),
-        "pow": round(pow_m2, 3),
+        "kod": l['kod'], "szer": szer, "wys": wys, "obwod": round(obwod_m, 2), "pow": round(pow_m2, 3),
         "results": {
             "listwa": round((c_l_netto * (1 + config['marza_listwa'])) * VAT * obwod_m, 2),
             "oprawa": round((c_o_netto * (1 + config['marza_oprawa'])) * VAT * obwod_m, 2),
@@ -109,12 +110,13 @@ async def generate_pdf(kod: str, s: float, w: float, suma: float, opis: str):
     pdf.set_font("Arial", "", 12)
     pdf.cell(0, 10, clean_pl(f"Kod listwy: {kod}"), ln=True)
     pdf.cell(0, 10, clean_pl(f"Wymiary: {int(s)} x {int(w)} cm"), ln=True)
-    pdf.ln(5)
-    pdf.multi_cell(0, 10, clean_pl(f"Elementy:\n{opis.replace('|', ', ')}"))
+    pdf.ln(10)
+    pdf.multi_cell(0, 10, clean_pl(f"Wybrane elementy:\n{opis.replace('|', ', ')}"))
     pdf.ln(10)
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, f"SUMA: {suma:.2f} PLN", ln=True)
     
-    pdf_output = pdf.output(dest='S').encode('latin-1')
-    return Response(content=pdf_output, media_type="application/pdf", 
+    # Naprawa generowania PDF w środowisku serverless
+    pdf_bytes = pdf.output(dest='S').encode('latin-1')
+    return Response(content=pdf_bytes, media_type="application/pdf", 
                     headers={"Content-Disposition": f"attachment; filename=wycena_{kod}.pdf"})
