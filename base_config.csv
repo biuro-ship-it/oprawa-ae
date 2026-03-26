@@ -1,0 +1,8 @@
+klucz;wartosc;opis
+float;45.00;Cena za m2 szkła float
+anty;65.00;Cena za m2 antyrefleksu
+hdf;25.00;Cena za m2 płyty HDF
+karton;15.00;Cena za m2 tyłu karton
+pp;40.00;Cena za m2 Passe-partout
+marza_listwa;0.50;Marża 50% na samą listwę
+marza_oprawa;0.30;Marża 30% na listwę w ramie
