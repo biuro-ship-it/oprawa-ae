@@ -4,17 +4,27 @@ import re
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 from fpdf import FPDF
 
 app = FastAPI()
 
-# --- KONFIGURACJA ŚCIEŻEK ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
-# --- LOGIKA ŁADOWANIA DANYCH ("PANCERNA") ---
+# --- MODELE DANYCH ---
+class ConfigUpdate(BaseModel):
+    haslo: str
+    float: float
+    anty: float
+    hdf: float
+    karton: float
+    pp: float
+    marza_listwa: float
+    marza_oprawa: float
+
+# --- LOGIKA ŁADOWANIA DANYCH ---
 def load_base_config():
-    # Domyślne wartości na wypadek gdyby base_config.csv miał zły format
     config = {
         'float': 45.0, 'anty': 65.0, 'hdf': 25.0, 'karton': 15.0, 'pp': 40.0,
         'marza_listwa': 0.5, 'marza_oprawa': 0.3
@@ -23,7 +33,6 @@ def load_base_config():
         path = os.path.join(BASE_DIR, 'base_config.csv')
         if os.path.exists(path):
             df = pd.read_csv(path, sep=';', decimal=',', header=None)
-            # Analiza wiersz po wierszu, ignorująca błędy w CSV
             for _, row in df.iterrows():
                 klucz = str(row[0]).strip().lower()
                 wartosc = str(row[1]).replace(',', '.').strip()
@@ -38,29 +47,20 @@ def load_producer_list(prod_id):
     try:
         file_path = os.path.join(BASE_DIR, 'cenniki', f'producent_{prod_id}.csv')
         if not os.path.exists(file_path): return None
-        
         df_raw = pd.read_csv(file_path, sep=';', decimal=',', header=None, dtype=str)
-        
-        # Odrzucamy 2 pierwsze wiersze nagłówków (tak jak w starym kodzie)
         df = df_raw.iloc[2:].copy()
-        
-        # Szukamy stopki i ucinamy wszystko od stopki w dół
         stopka_mask = df[0].astype(str).str.lower().str.contains('float|hdf|anty|pas|mar', na=False)
-        if stopka_mask.any():
-            df = df.loc[:stopka_mask.idxmax()-1]
-            
-        # Zabezpieczenie przed zbyt dużą liczbą kolumn
+        if stopka_mask.any(): df = df.loc[:stopka_mask.idxmax()-1]
         df = df.iloc[:, :5]
         if len(df.columns) < 5:
             for i in range(len(df.columns), 5): df[i] = "0"
-            
         df.columns = ['kod', 'ilosc', 'c_l', 'c_o', 'szer']
         df['kod'] = df['kod'].astype(str).str.strip()
         return df
-    except Exception as e:
+    except:
         return None
 
-# --- TRASY (ROUTES) ---
+# --- TRASY APLIKACJI KLIENTA ---
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return templates.TemplateResponse(request=request, name="index.html")
@@ -69,9 +69,7 @@ async def home(request: Request):
 async def get_codes(prod_id: str):
     df = load_producer_list(prod_id)
     if df is not None:
-        # Usuwamy puste wiersze
-        kody = [k for k in df['kod'].unique().tolist() if k and str(k).lower() != 'nan']
-        return {"codes": kody}
+        return {"codes": [k for k in df['kod'].unique().tolist() if k and str(k).lower() != 'nan']}
     return {"codes": []}
 
 @app.get("/api/calculate")
@@ -79,20 +77,14 @@ async def calculate(prod_id: str, kod: str, szer: float, wys: float):
     try:
         df_prod = load_producer_list(prod_id)
         config = load_base_config()
-        
-        if df_prod is None: return {"error": f"Brak pliku producent_{prod_id}.csv"}
-
+        if df_prod is None: return {"error": f"Brak cennika."}
         wybrana = df_prod[df_prod['kod'] == kod]
-        if wybrana.empty: return {"error": f"Brak kodu {kod} w bazie producenta."}
-
+        if wybrana.empty: return {"error": f"Brak kodu."}
         l = wybrana.iloc[0]
         
-        try:
-            sz_listwy = float(str(l['szer']).replace(',', '.'))
-            c_l = float(str(l['c_l']).replace(',', '.'))
-            c_o = float(str(l['c_o']).replace(',', '.'))
-        except ValueError:
-            return {"error": f"BŁĄD DANYCH: W cenniku dla kodu {kod} znajdują się litery zamiast liczb."}
+        sz_listwy = float(str(l['szer']).replace(',', '.'))
+        c_l = float(str(l['c_l']).replace(',', '.'))
+        c_o = float(str(l['c_o']).replace(',', '.'))
 
         obwod = ((2 * szer) + (2 * wys) + (8 * sz_listwy)) / 100
         pow_m2 = (szer * wys) / 10000
@@ -111,7 +103,7 @@ async def calculate(prod_id: str, kod: str, szer: float, wys: float):
             }
         }
     except Exception as e:
-        return {"error": f"Błąd wewnętrzny serwera: {str(e)}"}
+        return {"error": str(e)}
 
 @app.get("/api/pdf")
 async def generate_pdf(kod: str, s: float, w: float, suma: float, opis: str):
@@ -128,9 +120,35 @@ async def generate_pdf(kod: str, s: float, w: float, suma: float, opis: str):
     pdf.ln(10)
     pdf.set_font("Helvetica", "B", 14)
     pdf.cell(w=0, h=10, text=f"SUMA: {suma:.2f} PLN")
+    return Response(content=bytes(pdf.output()), media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=wycena_{kod}.pdf"})
+
+
+# --- TRASY ADMINA ---
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page(request: Request):
+    return templates.TemplateResponse(request=request, name="admin.html")
+
+@app.get("/api/admin/config")
+async def get_admin_config():
+    return load_base_config()
+
+@app.post("/api/admin/config")
+async def save_admin_config(data: ConfigUpdate):
+    # Proste zabezpieczenie hasłem (do zmiany na produkcję)
+    if data.haslo != "shipit2026":
+        return {"error": "Błędne hasło administratora!"}
     
-    return Response(
-        content=bytes(pdf.output()), 
-        media_type="application/pdf", 
-        headers={"Content-Disposition": f"attachment; filename=wycena_{kod}.pdf"}
-    )
+    try:
+        path = os.path.join(BASE_DIR, 'base_config.csv')
+        # Zapis do pliku CSV (Działa na stałe lokalnie, na Vercel tylko do restartu serwera)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(f"float;{data.float};Cena za m2 szkła float\n")
+            f.write(f"anty;{data.anty};Cena za m2 antyrefleksu\n")
+            f.write(f"hdf;{data.hdf};Cena za m2 płyty HDF\n")
+            f.write(f"karton;{data.karton};Cena za m2 tyłu karton\n")
+            f.write(f"pp;{data.pp};Cena za m2 Passe-partout\n")
+            f.write(f"marza_listwa;{data.marza_listwa};Marża na sama listwe\n")
+            f.write(f"marza_oprawa;{data.marza_oprawa};Marża na listwe w ramie\n")
+        return {"success": True, "message": "Zapisano zmiany pomyślnie!"}
+    except Exception as e:
+        return {"error": f"Błąd zapisu: {str(e)}"}

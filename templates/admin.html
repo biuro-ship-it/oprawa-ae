@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel Administratora - Antyramy.eu</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap" rel="stylesheet">
+    <style>body { font-family: 'Inter', sans-serif; }</style>
+</head>
+<body class="bg-slate-900 min-h-screen text-slate-100 pb-12">
+    <div class="max-w-2xl mx-auto px-4 pt-12 space-y-8">
+        
+        <div class="flex items-center justify-between">
+            <div>
+                <h1 class="text-3xl font-black text-white">⚙️ Ustawienia Cennika</h1>
+                <p class="text-slate-400 text-sm mt-1">Zarządzaj cenami bazowymi materiałów i marżami.</p>
+            </div>
+            <a href="/" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-xl font-bold transition">Wróć do Apki</a>
+        </div>
+
+        <div class="bg-slate-800 p-8 rounded-3xl shadow-2xl border border-slate-700">
+            <h2 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-6">Materiały (Cena za m2 netto)</h2>
+            <div class="grid grid-cols-2 gap-6 mb-8">
+                <div>
+                    <label class="block text-sm font-bold text-slate-300 mb-2">Szyba Float</label>
+                    <input type="number" id="inp_float" step="0.01" class="w-full p-3 bg-slate-900 border border-slate-700 rounded-xl focus:border-red-500 outline-none text-white font-bold">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-slate-300 mb-2">Szyba Antyreflex</label>
+                    <input type="number" id="inp_anty" step="0.01" class="w-full p-3 bg-slate-900 border border-slate-700 rounded-xl focus:border-red-500 outline-none text-white font-bold">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-slate-300 mb-2">Płyta HDF</label>
+                    <input type="number" id="inp_hdf" step="0.01" class="w-full p-3 bg-slate-900 border border-slate-700 rounded-xl focus:border-red-500 outline-none text-white font-bold">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-slate-300 mb-2">Tył Karton</label>
+                    <input type="number" id="inp_karton" step="0.01" class="w-full p-3 bg-slate-900 border border-slate-700 rounded-xl focus:border-red-500 outline-none text-white font-bold">
+                </div>
+                <div class="col-span-2">
+                    <label class="block text-sm font-bold text-slate-300 mb-2">Passe-partout</label>
+                    <input type="number" id="inp_pp" step="0.01" class="w-full p-3 bg-slate-900 border border-slate-700 rounded-xl focus:border-red-500 outline-none text-white font-bold">
+                </div>
+            </div>
+
+            <h2 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-6 pt-6 border-t border-slate-700">Marże (np. 0.5 = 50%)</h2>
+            <div class="grid grid-cols-2 gap-6 mb-8">
+                <div>
+                    <label class="block text-sm font-bold text-slate-300 mb-2">Sama listwa</label>
+                    <input type="number" id="inp_marza_listwa" step="0.01" class="w-full p-3 bg-slate-900 border border-slate-700 rounded-xl focus:border-red-500 outline-none text-white font-bold">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-slate-300 mb-2">Listwa w oprawie</label>
+                    <input type="number" id="inp_marza_oprawa" step="0.01" class="w-full p-3 bg-slate-900 border border-slate-700 rounded-xl focus:border-red-500 outline-none text-white font-bold">
+                </div>
+            </div>
+
+            <div class="p-6 bg-slate-900 rounded-2xl border border-red-500/30 flex items-center gap-4">
+                <input type="password" id="inp_haslo" placeholder="Wpisz hasło admina" class="flex-1 p-3 bg-slate-800 border border-slate-700 rounded-xl focus:border-red-500 outline-none text-white font-bold">
+                <button onclick="saveConfig()" class="bg-red-600 hover:bg-red-700 text-white px-8 py-3 rounded-xl font-bold transition whitespace-nowrap">💾 Zapisz</button>
+            </div>
+            <p id="statusMsg" class="mt-4 text-center font-bold text-sm hidden"></p>
+        </div>
+    </div>
+
+    <script>
+        // Pobieranie obecnych danych przy starcie
+        async function loadConfig() {
+            const res = await fetch('/api/admin/config');
+            const data = await res.json();
+            
+            document.getElementById('inp_float').value = data.float || 0;
+            document.getElementById('inp_anty').value = data.anty || 0;
+            document.getElementById('inp_hdf').value = data.hdf || 0;
+            document.getElementById('inp_karton').value = data.karton || 0;
+            document.getElementById('inp_pp').value = data.pp || 0;
+            document.getElementById('inp_marza_listwa').value = data.marza_listwa || 0;
+            document.getElementById('inp_marza_oprawa').value = data.marza_oprawa || 0;
+        }
+
+        // Zapisywanie danych na serwer
+        async function saveConfig() {
+            const payload = {
+                haslo: document.getElementById('inp_haslo').value,
+                float: parseFloat(document.getElementById('inp_float').value),
+                anty: parseFloat(document.getElementById('inp_anty').value),
+                hdf: parseFloat(document.getElementById('inp_hdf').value),
+                karton: parseFloat(document.getElementById('inp_karton').value),
+                pp: parseFloat(document.getElementById('inp_pp').value),
+                marza_listwa: parseFloat(document.getElementById('inp_marza_listwa').value),
+                marza_oprawa: parseFloat(document.getElementById('inp_marza_oprawa').value)
+            };
+
+            const msgBox = document.getElementById('statusMsg');
+            msgBox.classList.remove('hidden', 'text-green-400', 'text-red-400');
+            msgBox.innerText = "Zapisywanie...";
+
+            try {
+                const res = await fetch('/api/admin/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const result = await res.json();
+                
+                if(result.error) {
+                    msgBox.innerText = "❌ " + result.error;
+                    msgBox.classList.add('text-red-400');
+                } else {
+                    msgBox.innerText = "✅ " + result.message;
+                    msgBox.classList.add('text-green-400');
+                    document.getElementById('inp_haslo').value = ""; // czyścimy hasło
+                }
+            } catch (err) {
+                msgBox.innerText = "❌ Błąd komunikacji z serwerem.";
+                msgBox.classList.add('text-red-400');
+            }
+        }
+
+        // Uruchomienie ładowania po wejściu na stronę
+        loadConfig();
+    </script>
+</body>
+</html>
