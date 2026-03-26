@@ -8,14 +8,19 @@ from fpdf import FPDF
 
 app = FastAPI()
 
-# --- LOGIKA ŚCIEŻEK (Klucz do naprawy błędu 500) ---
-# __file__ to lokalizacja api/index.py. 
-# Folder główny projektu jest poziom wyżej.
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_DIR = os.path.dirname(CURRENT_DIR)
+# --- DIAGNOSTYKA ŚCIEŻEK ---
+# Vercel montuje aplikację w /var/task
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+print(f"DEBUG: BASE_DIR is {BASE_DIR}")
+print(f"DEBUG: Content of BASE_DIR: {os.listdir(BASE_DIR)}")
 
-templates_path = os.path.join(BASE_DIR, "templates")
-templates = Jinja2Templates(directory=templates_path)
+# Próbujemy znaleźć folder templates
+templates_dir = os.path.join(BASE_DIR, "templates")
+if not os.path.exists(templates_dir):
+    # Jeśli Vercel wrzucił templates do api/
+    templates_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+
+templates = Jinja2Templates(directory=templates_dir)
 
 VAT = 1.23
 
@@ -25,8 +30,9 @@ def clean_pl(text):
 
 def load_data():
     try:
-        # Szukamy cennika w głównym folderze
         csv_path = os.path.join(BASE_DIR, 'cennik.csv')
+        if not os.path.exists(csv_path):
+            return None, None
         df_raw = pd.read_csv(csv_path, sep=';', decimal=',', header=None, dtype=str)
         
         def get_val_footer(keyword, col_idx):
@@ -57,17 +63,20 @@ def load_data():
         df_frames['kod'] = df_frames['kod'].astype(str).str.strip()
         return df_frames, prices
     except Exception as e:
-        print(f"Błąd krytyczny: {e}")
+        print(f"ERROR: load_data failed: {e}")
         return None, None
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    try:
+        return templates.TemplateResponse("index.html", {"request": request})
+    except Exception as e:
+        return HTMLResponse(content=f"Błąd szablonu: {e}. Szukano w: {templates_dir}", status_code=500)
 
 @app.get("/api/calculate")
 async def calculate(query: str):
     df, config = load_data()
-    if df is None: return {"error": "Błąd ładowania danych z pliku CSV."}
+    if df is None: return {"error": "Nie znaleziono pliku cennik.csv"}
 
     liczby = re.findall(r'\d+', query)
     if not liczby: return {"error": "Wpisz kod."}
@@ -75,7 +84,7 @@ async def calculate(query: str):
     kod_szukany = liczby[0]
     wybrana = df[df['kod'] == kod_szukany]
     
-    if wybrana.empty: return {"error": f"Nie znaleziono kodu {kod_szukany}"}
+    if wybrana.empty: return {"error": f"Brak kodu {kod_szukany}"}
 
     l = wybrana.iloc[0]
     szer = float(liczby[1]) if len(liczby) >= 2 else 30.0
@@ -102,21 +111,20 @@ async def calculate(query: str):
 
 @app.get("/api/pdf")
 async def generate_pdf(kod: str, s: float, w: float, suma: float, opis: str):
+    # Używamy fpdf2 dla lepszej stabilności
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "WYCENA OPRAWY - ANTYRAMY.EU", ln=True, align="C")
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, "WYCENA OPRAWY - ANTYRAMY.EU", new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.ln(10)
-    pdf.set_font("Arial", "", 12)
-    pdf.cell(0, 10, clean_pl(f"Kod listwy: {kod}"), ln=True)
-    pdf.cell(0, 10, clean_pl(f"Wymiary: {int(s)} x {int(w)} cm"), ln=True)
+    pdf.set_font("Helvetica", size=12)
+    pdf.cell(0, 10, clean_pl(f"Kod listwy: {kod}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 10, clean_pl(f"Wymiary: {int(s)} x {int(w)} cm"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(10)
     pdf.multi_cell(0, 10, clean_pl(f"Wybrane elementy:\n{opis.replace('|', ', ')}"))
     pdf.ln(10)
-    pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, f"SUMA: {suma:.2f} PLN", ln=True)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 10, f"SUMA: {suma:.2f} PLN", new_x="LMARGIN", new_y="NEXT")
     
-    # Naprawa generowania PDF w środowisku serverless
-    pdf_bytes = pdf.output(dest='S').encode('latin-1')
-    return Response(content=pdf_bytes, media_type="application/pdf", 
+    return Response(content=pdf.output(), media_type="application/pdf", 
                     headers={"Content-Disposition": f"attachment; filename=wycena_{kod}.pdf"})

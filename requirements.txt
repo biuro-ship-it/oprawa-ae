@@ -2,5 +2,5 @@ fastapi
 uvicorn
 jinja2
 pandas
-fpdf
+fpdf2
 python-multipart
